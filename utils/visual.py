@@ -14,10 +14,11 @@ def to_pyvis(tree: Dict[str, Any], height="720px", width="100%"):
         for ch in node.get("children", []):
             add(ch, nid)
     add(tree, None)
+    
     net.set_options("""
-    const options = {
-      physics: { hierarchicalRepulsion: { centralGravity: 0.0 } },
-      layout: { improvedLayout: true }
+    {
+      "physics": { "stabilization": true },
+      "layout": { "improvedLayout": true }
     }
     """)
     return net

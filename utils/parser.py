@@ -239,13 +239,15 @@ def flatten_to_depth(tree: Dict[str, Any], max_depth: int) -> Dict[str, Any]:
     return rec(tree, 0)
 
 def collapse_single_chains(tree: Dict[str, Any]) -> Dict[str, Any]:
-    """Collapse nodes with a single child into a combined label (for compact mindmap)."""
+    """Collapse nodes with a single child into a combined label (for compact mindmap). Keep original meta."""
     def rec(node):
         label = node.get("title", "")
         children = node.get("children", [])
+        meta = node.get("meta", {})
+        cur = node
         while len(children) == 1 and children[0].get("children"):
-            label = f"{label} / {children[0]['title']}"
-            node = children[0]
-            children = node.get("children", [])
-        return {"title": label, "children": [rec(c) for c in children], "meta": node.get("meta", {})}
+            label = f"{label} / {children[0].get('title','')}"
+            cur = children[0]
+            children = cur.get("children", [])
+        return {"title": label, "children": [rec(c) for c in children], "meta": meta}
     return rec(tree)
