@@ -1,20 +1,5 @@
-# Generic Outline & Mindmap Visualizer
+# koubun_mindmap_tool_fix2
 
-**Goal**: A *generic* tool to visualize document/presentation structure as a collapsible outline & mindmap.
-
-- Input: **PDF**, **DOCX**, **PPTX**
-- Output: **Interactive mindmap (HTML)**, **JSON**, **Markdown**, **OPML**
-- Controls: **Max depth** slider, **Collapse single-child chains** toggle
-
-## Why generic?
-- Works with arbitrary RFQs, specs, contracts, slide decks, reports
-- Language-aware heuristics for English/Japanese headings
-- Robust PDF support: tries `pypdf` first, falls back to `PyPDF2`
-
-## Run
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-> No system Graphviz required (uses PyVis). Suitable for Streamlit Cloud.
+- PyVis の **`show()` を使わず `write_html()`** を使用
+- `set_options()` は **純粋な JSON** で指定
+- PDF/DOCX/PPTX のアウトライン抽出に対応
