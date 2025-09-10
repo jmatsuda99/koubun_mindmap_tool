@@ -1,23 +1,44 @@
 
 # -*- coding: utf-8 -*-
 """
-Lightweight document outline parsers for PDF/DOCX/PPTX.
-Returns a uniform tree structure:
-{"title": "...", "children": [ ... ], "meta": {...}}
+Generic outline parser for PDF/DOCX/PPTX producing a normalized tree:
+
+{
+  "title": "ROOT",
+  "children": [ { "title": "...", "children": [...] }, ... ],
+  "meta": {...}
+}
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
 import re
 
-# PDF
-from pypdf import PdfReader
-# DOCX
+# ---- PDF readers (robust import) ----
+try:
+    from pypdf import PdfReader as PdfReaderNew
+except Exception:
+    PdfReaderNew = None
+
+try:
+    from PyPDF2 import PdfReader as PdfReaderOld
+except Exception:
+    PdfReaderOld = None
+
+# ---- DOCX / PPTX ----
 from docx import Document
-# PPTX
 from pptx import Presentation
 
-HEADING_PAT = re.compile(r"^(?:\d+(?:\.\d+)*[\)\.]\s*)|(?:第[一二三四五六七八九十]+章)|(?:[A-Z]\.)")
+HEADING_HINT = re.compile(
+    r"^("
+    r"(?:\d+(?:\.\d+){0,3}[\)\.]?\s+)"     # 1 / 1.2 / 1.2.3
+    r"|(?:第[一二三四五六七八九十百千]+[章部節項])"  # 第1章/第一章 など
+    r"|(?:[A-Z]\.)"                        # A. B. C.
+    r"|(?:Appendix|Annex|Chapter|Section)" # 英語見出し語
+    r")"
+)
+
+BULLET_HINT = re.compile(r"^[\-\u2022\u25CF\u25A0\u25E6\*]\s+")
 
 @dataclass
 class Node:
@@ -27,122 +48,175 @@ class Node:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "title": self.title,
-            "level": self.level,
-            "children": [c.to_dict() for c in self.children],
-            "meta": self.meta,
-        }
+        return {"title": self.title, "level": self.level, "children": [c.to_dict() for c in self.children], "meta": self.meta}
 
 def _nest_by_levels(items: List[Tuple[int, str, Dict[str, Any]]], root_title="ROOT") -> Dict[str, Any]:
     root = Node(root_title, level=0)
     stack = [root]
     for lvl, title, meta in items:
-        node = Node(title=title.strip(), level=lvl, meta=meta)
-        # climb up
-        while stack and lvl <= stack[-1].level:
+        title = re.sub(r"\s+", " ", title.strip())
+        if not title:
+            continue
+        node = Node(title=title, level=max(1, int(lvl)), meta=meta)
+        # climb up until parent is above this level
+        while stack and node.level <= stack[-1].level:
             stack.pop()
         stack[-1].children.append(node)
         stack.append(node)
     return root.to_dict()
 
-def parse_pdf(path: str) -> Dict[str, Any]:
-    reader = PdfReader(path)
-    items: List[Tuple[int, str, Dict[str, Any]]] = []
-    # Try PDF outline (bookmarks)
-    try:
-        outlines = reader.outline
-        def walk(out, level=1):
-            for o in out:
-                if isinstance(o, list):
-                    walk(o, level+1)
-                else:
-                    title = str(getattr(o, "title", o))
-                    items.append((level, title, {"type": "pdf_outline"}))
-        if outlines:
-            walk(outlines, 1)
-    except Exception:
-        pass
-    # Fallback: infer from headings-like lines on first N pages
-    if not items:
-        for i, page in enumerate(reader.pages[:30]):
-            text = page.extract_text() or ""
-            for line in text.splitlines():
-                line_s = line.strip()
-                if not line_s:
-                    continue
-                # Heading heuristics
-                if HEADING_PAT.search(line_s) or len(line_s) <= 30:
-                    # rough level by count of dots like 1.2.3 -> 3; or bullets
-                    m = re.match(r"^(\d+(?:\.\d+)+)", line_s)
-                    if m:
-                        level = m.group(1).count(".") + 1
-                    elif re.match(r"^\d+[\.\)]", line_s):
-                        level = 1
-                    elif re.match(r"^[A-Z]\.", line_s):
-                        level = 1
-                    elif re.match(r"^第[一二三四五六七八九十]+章", line_s):
-                        level = 1
-                    else:
-                        level = 2
-                    items.append((level, line_s, {"type": "pdf_text", "page": i+1}))
-    return _nest_by_levels(items or [(1, "Document", {})], root_title="PDF")
+def _guess_level(line: str) -> int:
+    # 1.2.3 -> 3, "1) " -> 1, bullets -> 2, otherwise 2
+    line = line.strip()
+    m = re.match(r"^(\d+(?:\.\d+)+)", line)
+    if m:
+        return m.group(1).count(".") + 1
+    if re.match(r"^\d+[\.\)]", line):
+        return 1
+    if re.match(r"^[A-Z]\.", line):
+        return 1
+    if re.match(r"^第[一二三四五六七八九十百千]+[章部節項]", line):
+        return 1
+    if BULLET_HINT.search(line):
+        return 2
+    return 2
 
+# -------- PDF --------
+def parse_pdf(path: str) -> Dict[str, Any]:
+    reader = None
+    outline = None
+    items: List[Tuple[int, str, Dict[str, Any]]] = []
+
+    # try pypdf first
+    if PdfReaderNew is not None:
+        try:
+            reader = PdfReaderNew(path)
+            try:
+                outline = reader.outline
+            except Exception:
+                try:
+                    outline = reader.outlines
+                except Exception:
+                    outline = None
+        except Exception:
+            reader = None
+
+    # fallback to PyPDF2
+    if reader is None and PdfReaderOld is not None:
+        try:
+            reader = PdfReaderOld(path)
+            try:
+                outline = reader.outline
+            except Exception:
+                try:
+                    outline = reader.outlines
+                except Exception:
+                    outline = None
+        except Exception:
+            reader = None
+
+    def walk(out, level=1):
+        for o in out:
+            if isinstance(o, list):
+                walk(o, level+1)
+            else:
+                title = str(getattr(o, "title", o))
+                items.append((level, title, {"type": "pdf_outline"}))
+
+    # extract outlines if present
+    if outline:
+        try:
+            walk(outline, 1)
+        except Exception:
+            items = []
+
+    # fallback: heading-like text from first N pages
+    if not items and reader is not None:
+        pages = min(40, len(reader.pages))
+        for i in range(pages):
+            try:
+                txt = reader.pages[i].extract_text() or ""
+            except Exception:
+                txt = ""
+            for raw in txt.splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                if HEADING_HINT.search(line) or len(line) <= 32:
+                    level = _guess_level(line)
+                    items.append((level, line, {"type": "pdf_text", "page": i+1}))
+
+    if not items:
+        items = [(1, "Document", {"type": "pdf_empty"})]
+    return _nest_by_levels(items, root_title="PDF")
+
+# -------- DOCX --------
 def parse_docx(path: str) -> Dict[str, Any]:
     doc = Document(path)
     items: List[Tuple[int, str, Dict[str, Any]]] = []
+
     for p in doc.paragraphs:
-        style = getattr(p.style, "name", "")
-        text = p.text.strip()
+        text = (p.text or "").strip()
         if not text:
             continue
+        style = getattr(p.style, "name", "") or ""
         lvl = None
-        # Heading styles
-        if style.startswith("Heading") or style.startswith("見出し"):
+
+        # Heading styles (both English & Japanese)
+        if style.lower().startswith("heading") or "見出し" in style:
             m = re.search(r"(\d+)$", style)
             lvl = int(m.group(1)) if m else 1
-        # Numbered headings heuristic
-        if lvl is None:
-            if HEADING_PAT.search(text):
-                m = re.match(r"^(\d+(?:\.\d+)+)", text)
-                if m:
-                    lvl = m.group(1).count(".") + 1
-                else:
-                    lvl = 2
-        if lvl is not None:
-            items.append((lvl, text, {"type": "docx_heading", "style": style}))
-    if not items:
-        # fallback to first paragraphs
-        for p in doc.paragraphs[:50]:
-            t = p.text.strip()
-            if t:
-                items.append((1, t[:40], {"type": "docx_text"}))
-    return _nest_by_levels(items or [(1, "Document", {})], root_title="DOCX")
 
+        # Numbered headings heuristics
+        if lvl is None and HEADING_HINT.search(text):
+            m = re.match(r"^(\d+(?:\.\d+)+)", text)
+            lvl = m.group(1).count(".") + 1 if m else 2
+
+        if lvl is not None:
+            items.append((min(lvl, 6), text, {"type": "docx_heading", "style": style}))
+
+    if not items:
+        # fallback: take first non-empty paragraphs as level-1
+        for p in doc.paragraphs[:50]:
+            t = (p.text or "").strip()
+            if t:
+                items.append((1, t[:60], {"type": "docx_text"}))
+
+    return _nest_by_levels(items, root_title="DOCX")
+
+# -------- PPTX --------
 def parse_pptx(path: str) -> Dict[str, Any]:
     prs = Presentation(path)
     items: List[Tuple[int, str, Dict[str, Any]]] = []
-    for i, slide in enumerate(prs.slides, start=1):
+    for idx, slide in enumerate(prs.slides, start=1):
         title = None
-        for shape in slide.shapes:
-            if hasattr(shape, "text_frame") and shape.text_frame:
-                # assume the first text frame is title-ish
-                txt = shape.text_frame.text.strip()
-                if txt:
-                    if title is None:
-                        title = txt
-                    else:
-                        # add bullet lines as children level 2
-                        for p in shape.text_frame.paragraphs:
-                            t = "".join(run.text for run in p.runs).strip() or p.text.strip()
-                            if t:
-                                items.append((2, t, {"type": "pptx_bullet", "slide": i}))
-        if title:
-            items.append((1, f"Slide {i}: {title}", {"type": "pptx_title", "slide": i}))
-        else:
-            items.append((1, f"Slide {i}", {"type": "pptx_title", "slide": i}))
+        # title placeholder
+        if slide.shapes.title and hasattr(slide.shapes.title, "text"):
+            title = slide.shapes.title.text.strip() or None
+        # otherwise first text box
+        if title is None:
+            for shp in slide.shapes:
+                if hasattr(shp, "text_frame") and shp.text_frame and shp.text_frame.text.strip():
+                    title = shp.text_frame.text.strip().splitlines()[0]
+                    break
+        items.append((1, f"Slide {idx}: {title or 'Untitled'}", {"type": "pptx_title", "slide": idx}))
+
+        # bullets as level 2/3 depending on indent level
+        for shp in slide.shapes:
+            if not hasattr(shp, "text_frame") or not shp.text_frame:
+                continue
+            for p in shp.text_frame.paragraphs:
+                txt = "".join(run.text for run in p.runs).strip() or p.text.strip()
+                if not txt:
+                    continue
+                if txt == title:
+                    continue
+                level = (p.level or 0) + 2  # level 2..N
+                items.append((level, txt, {"type": "pptx_bullet", "slide": idx, "indent": p.level or 0}))
+
     return _nest_by_levels(items, root_title="PPTX")
 
+# -------- Public API --------
 def parse_any(path: str) -> Dict[str, Any]:
     low = path.lower()
     if low.endswith(".pdf"):
@@ -154,12 +228,24 @@ def parse_any(path: str) -> Dict[str, Any]:
     raise ValueError("Unsupported file type")
 
 def flatten_to_depth(tree: Dict[str, Any], max_depth: int) -> Dict[str, Any]:
-    """Trim children beyond max_depth (root level=0)"""
+    """Trim children beyond max_depth (root level=0)."""
     def rec(node: Dict[str, Any], depth: int) -> Dict[str, Any]:
-        nd = {"title": node.get("title", ""), "level": node.get("level", depth), "meta": node.get("meta", {})}
+        out = {"title": node.get("title", ""), "level": node.get("level", depth), "meta": node.get("meta", {})}
         if depth >= max_depth:
-            nd["children"] = []
+            out["children"] = []
         else:
-            nd["children"] = [rec(c, depth+1) for c in node.get("children", [])]
-        return nd
+            out["children"] = [rec(c, depth+1) for c in node.get("children", [])]
+        return out
     return rec(tree, 0)
+
+def collapse_single_chains(tree: Dict[str, Any]) -> Dict[str, Any]:
+    """Collapse nodes with a single child into a combined label (for compact mindmap)."""
+    def rec(node):
+        label = node.get("title", "")
+        children = node.get("children", [])
+        while len(children) == 1 and children[0].get("children"):
+            label = f"{label} / {children[0]['title']}"
+            node = children[0]
+            children = node.get("children", [])
+        return {"title": label, "children": [rec(c) for c in children], "meta": node.get("meta", {})}
+    return rec(tree)

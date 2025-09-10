@@ -1,22 +1,20 @@
-# 構文木の見える化ツール（PDF/DOCX/PPTX）
+# Generic Outline & Mindmap Visualizer
 
-文書（PDF/DOCX）とプレゼン（PPTX）から見出し・スライド構造を抽出し、
-**マインドマップ風**（Graphviz）と**インタラクティブネットワーク**（PyVis）で可視化します。
-スライダーで**階層の深さ**を調整できます。
+**Goal**: A *generic* tool to visualize document/presentation structure as a collapsible outline & mindmap.
 
-## 特徴
-- PDF：しおり（アウトライン）があれば優先、なければヘッダ風テキストをヒューリスティクス抽出
-- DOCX：見出しスタイル（Heading 1/見出し1 等）＋番号付き見出しをヒューリスティクス
-- PPTX：スライドタイトルと箇条書きを階層化
-- 出力：PNG（Graphviz）/ HTML（PyVis）/ JSON
+- Input: **PDF**, **DOCX**, **PPTX**
+- Output: **Interactive mindmap (HTML)**, **JSON**, **Markdown**, **OPML**
+- Controls: **Max depth** slider, **Collapse single-child chains** toggle
 
-## 使い方（ローカル）
+## Why generic?
+- Works with arbitrary RFQs, specs, contracts, slide decks, reports
+- Language-aware heuristics for English/Japanese headings
+- Robust PDF support: tries `pypdf` first, falls back to `PyPDF2`
+
+## Run
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## 設計メモ
-- `utils/parser.py`：ファイル種別ごとのアウトライン抽出、`flatten_to_depth()`で階層トリミング
-- `utils/visual.py`：Graphviz/pyvis へのレンダリング
-- 将来的には DB 保存や全文検索の追加、章/節単位のフィルタ、検索ハイライト等を想定
+> No system Graphviz required (uses PyVis). Suitable for Streamlit Cloud.
