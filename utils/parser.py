@@ -15,7 +15,10 @@ except Exception:
 from docx import Document
 from pptx import Presentation
 
-HEADING_HINT = re.compile(r"^(?:\d+(?:\.\d+){0,3}[\)\.]?\s+|第[一二三四五六七八九十百千]+[章部節項]|[A-Z]\. |Appendix|Annex|Chapter|Section)")
+HEADING_HINT = re.compile(
+    r"^(?:\d+(?:\.\d+){0,3}[\)\.]?\s+|第[一二三四五六七八九十百千]+[章部節項]|[A-Z]\.\s+|Appendix|Annex|Chapter|Section)"
+)
+BULLET_HINT = re.compile(r"^[\-\u2022\u25CF\u25A0\u25E6\*・⚫]\s+")
 
 @dataclass
 class Node:
@@ -29,7 +32,7 @@ class Node:
 def _nest(items: List[Tuple[int, str, Dict[str, Any]]], root_title="ROOT") -> Dict[str, Any]:
     root = Node(root_title, level=0); stack=[root]
     for lvl, title, meta in items:
-        title = re.sub(r"\s+", " ", title.strip())
+        title = re.sub(r"\s+", " ", (title or "").strip())
         if not title: continue
         node = Node(title=title, level=max(1, int(lvl)), meta=meta)
         while stack and node.level <= stack[-1].level:
@@ -39,11 +42,12 @@ def _nest(items: List[Tuple[int, str, Dict[str, Any]]], root_title="ROOT") -> Di
     return root.to_dict()
 
 def _guess_level(line:str)->int:
-    m=re.match(r"^(\d+(?:\.\d+)+)", line); 
+    m = re.match(r"^(\d+(?:\.\d+)+)", line)
     if m: return m.group(1).count(".")+1
-    if re.match(r"^\d+[\.]|^\d+\)", line): return 1
+    if re.match(r"^\d+[\.)]", line): return 1
     if re.match(r"^[A-Z]\.", line): return 1
     if re.match(r"^第[一二三四五六七八九十百千]+[章部節項]", line): return 1
+    if BULLET_HINT.search(line): return 2
     return 2
 
 def parse_pdf(path:str)->Dict[str,Any]:
