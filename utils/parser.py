@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple
 import re
 
+# PDF readers (robust import fallback)
 try:
     from pypdf import PdfReader as PdfReaderNew
 except Exception:

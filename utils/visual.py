@@ -1,6 +1,11 @@
 from typing import Dict, Any
 from pyvis.network import Network
-import uuid
+import uuid, json
+
+def safe_set_options(net: Network, options_json: str):
+    # Ensure JSON (PyVis parses JSON only)
+    json.loads(options_json)
+    net.set_options(options_json)
 
 def to_pyvis(tree: Dict[str, Any], height="720px", width="100%"):
     net = Network(height=height, width=width, directed=True)
@@ -12,7 +17,7 @@ def to_pyvis(tree: Dict[str, Any], height="720px", width="100%"):
         for ch in node.get("children", []):
             add(ch, nid)
     add(tree, None)
-    net.set_options("""{
+    safe_set_options(net, """{
   "physics": { "stabilization": true },
   "layout": { "improvedLayout": true }
 }
